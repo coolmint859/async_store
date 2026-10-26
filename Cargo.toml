@@ -1,10 +1,13 @@
 [package]
-name = "resource-store"
-description = "A lightweight, TTL-based, async resource storage and task handler created on top of tokio."
-license = "MIT"
-keywords = ["async", "game-engine", "resource-manager", "tokio", ""]
+name = "async-store"
 version = "0.1.0"
 edition = "2024"
+description = "A lightweight, TTL-based, async resource storage adn lifecycle handler created on top of tokio."
+license = "MIT"
+repository = "https://github.com/coolmint859/async_store"
+readme = "README.md"
+keywords = ["async", "game-engine", "resource-manager", "tokio", "concurrency"]
+categories = ["async", "concurrency", "game-development", "resource-manager"]
 
 [dependencies]
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time"]}

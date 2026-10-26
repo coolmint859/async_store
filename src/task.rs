@@ -6,7 +6,7 @@ use tokio::{runtime::Handle, task::JoinHandle};
 
 use crate::resource::{Failed, Ready, Resource, ResourceState};
 
-/// Represents the duration a resource is kept alive in a `ResourceHandler`
+/// Describes the TTL policy for resources stored in a `ResourceHandler`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HoldPolicy {
     /// Resource persists for the duration of program unless manually removed
@@ -18,9 +18,7 @@ pub enum HoldPolicy {
 /// Specifies whether a `Task` is io-bound (Non-Blocking) or cpu-bound (Blocking)
 #[derive(Debug)]
 pub enum TaskType {
-    /// task is cpu-bound
     CpuBound,
-    /// task is io-bound
     IoBound
 }
 
@@ -49,8 +47,8 @@ impl<E: Send + Debug + Display + 'static> From<E> for TaskError<E> {
     fn from(err: E) -> Self { Self::TaskInternal(err) }
 }
 
-/// An operation performed by a `tokio` thread on a future `F` which returns `Result<R, E>`, where R is stored in a
-/// `ResourceHandler` of the matching resource 
+/// An operation performed by a `tokio` thread on a future `F` which returns `Result<R, E>`, where `R` is stored in a
+/// `ResourceHandler` of the matching type. 
 #[derive(Debug)]
 pub struct Task<F, R, E> {
     pub fut: F,
@@ -136,7 +134,7 @@ where
         }
     }
 
-    /// Converts the result of a task into a `ResourceState`.
+    /// Converts the result of a `Task` worker thread into a `ResourceState`.
     fn result_to_state(result: Result<R, E>, hold_policy: HoldPolicy) -> ResourceState<R, E> {
         match result {
             Ok(rsc) => ResourceState::Ready(Ready {

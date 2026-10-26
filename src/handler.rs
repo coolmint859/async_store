@@ -118,7 +118,7 @@ where
     pub fn remove(&mut self, key: &K) -> Option<R> {
         self.resource_map
             .remove(key)
-            .and_then(|rsc| rsc.state.take())
+            .and_then(|rsc| rsc.take())
     }
 
     /// Removes a resource from internal map if it's in the `Ready` state, and returns it.
@@ -139,7 +139,7 @@ where
     /// Removes all resources that are in the `Failed` state.
     pub fn clear_failed(&mut self) {
         self.resource_map.retain(|_, rsc| {
-            rsc.state.is_pending() || rsc.state.is_ready()
+            rsc.is_pending() || rsc.is_ready()
         });
     }
 
@@ -163,38 +163,38 @@ where
 
         let now = Instant::now();
         self.resource_map.retain(|_, rsc| {
-            rsc.state.evaluate(&now, self.thread_timeout, self.failed_timeout)
+            rsc.eval_state(&now, self.thread_timeout, self.failed_timeout)
         });
     }
 
     /// Returns `true` if a resource with `key` is stored in the map and is in the `Ready` state, `false` otherwise.
     pub fn is_ready(&self, key: &K) -> bool {
-        self.resource_map.get(key).is_some_and(|rsc| rsc.state.is_ready())
+        self.resource_map.get(key).is_some_and(|rsc| rsc.is_ready())
     }
 
     /// Returns `true` if a resource with `key` is stored in the map and is in the `Pending` state, `false` otherwise.
     pub fn is_pending(&self, key: &K) -> bool {
-        self.resource_map.get(key).is_some_and(|rsc| rsc.state.is_pending())
+        self.resource_map.get(key).is_some_and(|rsc| rsc.is_pending())
     }
 
     /// Returns `true` if a resource with `key` is stored in the map and is in the `Failed` state, `false` otherwise.
     pub fn is_failed(&self, key: &K) -> bool {
-        self.resource_map.get(key).is_some_and(|rsc| rsc.state.is_failed())
+        self.resource_map.get(key).is_some_and(|rsc| rsc.is_failed())
     }
 
     /// Returns `true` if a resource is in either the `Pending` or `Ready` states, `false` otherwise.
     pub fn is_requested(&self, key: &K) -> bool {
         self.resource_map.get(key).is_some_and(|rsc| {
-            return rsc.state.is_pending() || rsc.state.is_ready()
+            return rsc.is_pending() || rsc.is_ready()
         })
     }
 
     /// Get the error `E` of a resource with `key` if in the `Failed` state.
     pub fn get_err_of(&self, key: &K) -> Option<&TaskError<E>> {
-        return self.resource_map.get(key)?.state.error();
+        return self.resource_map.get(key)?.error();
     }
 
-    /// Get the state of a resource. `None` is returned if the resource does not exist.
+    /// Returns the `ResourceState` of a resource if exists, else `None`
     pub fn get_state_of(&self, key: &K) -> Option<&ResourceState<R, E>> {
         self.resource_map.get(key).map(|rsc| &rsc.state)
     }
@@ -227,19 +227,14 @@ where
     /// 
     /// This is useful in the case the resource is a dependency to some other resource, but you don't need a reference to it.
     pub fn mark_accessed(&self, key: &K) {
-        self.resource_map.get(key).map(|rsc| {
-            match &rsc.state {
-                ResourceState::Ready(ready) => {
-                    ready.accessed.set(Instant::now())
-                },
-                _ => {}
-            }
-        });
+        if let Some(rsc) = self.resource_map.get(key) {
+            rsc.mark_accessed();
+        }
     }
 
     /// Returns `true` if the internal map contains a resource with the specified `key` (in any state), `false` otherwise.
     /// 
-    /// Note: This does not mark the resource as accessed if exists.
+    /// Note: This does not mark the resource as accessed if in the `Ready` state.
     pub fn contains(&self, key: &K) -> bool {
         self.resource_map.contains_key(key)
     }
@@ -258,8 +253,6 @@ where
     }
 
     /// Returns `true` if the internal map contains a `Pending` resource with the specified `key`, `false` otherwise.
-    /// 
-    /// Note: This does not mark the resource as accessed if exists.
     pub fn contains_pending(&self, key: &K) -> bool {
         if let Some(rsc) = self.resource_map.get(key) {
             match rsc.state {
@@ -271,8 +264,6 @@ where
     }
 
     /// Returns `true` if the internal map contains a `Failed` resource with the specified `key`, `false` otherwise.
-    /// 
-    /// Note: This does not mark the resource as accessed if exists.
     pub fn contains_failed(&self, key: &K) -> bool {
         if let Some(rsc) = self.resource_map.get(key) {
             match rsc.state {
@@ -291,21 +282,21 @@ where
     /// Get an iterator of the keys of all `Ready` resources.
     pub fn ready_keys(&self) -> impl Iterator<Item = &K> {
         self.resource_map.iter().filter_map(|(key, rsc)| {
-            if rsc.state.is_ready() { Some(key) } else { None }
+            if rsc.is_ready() { Some(key) } else { None }
         })
     }
 
     /// Get an iterator of the keys of all `Pending` resources.
     pub fn pending_keys(&self) -> impl IntoIterator<Item = &K> {
         self.resource_map.iter().filter_map(|(key, rsc)| {
-            if rsc.state.is_pending() { Some(key) } else { None }
+            if rsc.is_pending() { Some(key) } else { None }
         })
     }
 
     /// Get an iterator of the keys of all `Failed` resources.
     pub fn failed_keys(&self) -> impl IntoIterator<Item = &K> {
         self.resource_map.iter().filter_map(|(key, rsc)| {
-            if rsc.state.is_failed() { Some(key) } else { None }
+            if rsc.is_failed() { Some(key) } else { None }
         })
     }
 
