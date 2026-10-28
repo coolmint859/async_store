@@ -22,29 +22,26 @@ pub enum TaskType {
     IoBound
 }
 
-/// Error occurred from running a task
+/// A error that occurred while running a task
 #[derive(Debug)]
 pub enum TaskError<E> {
-    /// Thread timed out before task completed
+    /// Worker thread timed out before task completed
     ThreadTimeout,
-    /// Task worker thread panicked while executing.
-    TaskPanic,
-    /// Error occurred while running the task
+    /// Worker thread panicked while executing.
+    ThreadPanic,
+    /// Error result was returned after running the task
     TaskInternal(E)
 }
 
+impl<E: Send + Debug + Display> std::error::Error for TaskError<E> {}
 impl<E: Display> Display for TaskError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TaskError::ThreadTimeout => write!(f, "Worker thread lost or stalled execution."),
-            TaskError::TaskPanic => write!(f, "Task's worker thread panicked during execution"),
+            TaskError::ThreadPanic => write!(f, "Worker thread panicked during execution"),
             TaskError::TaskInternal(err) => write!(f, "{}", err),
         }
     }
-}
-impl<E: Send + Debug + Display> std::error::Error for TaskError<E> {}
-impl<E: Send + Debug + Display + 'static> From<E> for TaskError<E> {
-    fn from(err: E) -> Self { Self::TaskInternal(err) }
 }
 
 /// An operation performed by a `tokio` thread on a future `F` which returns `Result<R, E>`, where `R` is stored in a
@@ -102,7 +99,7 @@ where
                     let state =  match result {
                         Ok(task_result) => Self::result_to_state(task_result, self.hold_policy),
                         Err(_) => ResourceState::Failed(Failed {
-                            err: TaskError::TaskPanic,
+                            err: TaskError::ThreadPanic,
                             failed_at: Instant::now()
                         })
                     };
@@ -122,7 +119,7 @@ where
                     let state = match result {
                         Ok(task_result) => Self::result_to_state(task_result, self.hold_policy),
                         Err(_) => ResourceState::Failed(Failed { 
-                            err: TaskError::TaskPanic, 
+                            err: TaskError::ThreadPanic, 
                             failed_at: Instant::now()
                         })
                     };

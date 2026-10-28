@@ -121,8 +121,8 @@ mod tests {
         let err = handler.get_err_of(&key);
 
         match err {
-            Some(TaskError::TaskPanic) => {},
-            _ => panic!("Expected TaskPanic error"),
+            Some(TaskError::ThreadPanic) => {},
+            _ => panic!("Expected ThreadPanic error"),
         }
     }
 

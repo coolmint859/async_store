@@ -66,13 +66,15 @@ where
         self.get(&key)
     }
 
-    /// Request a worker thread to create a resource via a Future.
+    /// Request a worker thread to create a resource by running a `Task`.
     /// 
     /// If the resource is brand new or previously requested but failed, this method spawns a background tokio thread.
-    /// If the resource exists but is pending or ready, this method does nothing.
+    /// If the resource was previously requested but is pending or ready, this method does nothing.
+    /// 
+    /// For cpu-bound tasks, generation counters are used to prevent older requests that timed out from overwriting new ones.
     /// 
     /// * 'key' - A key of type `K` used query the handler for the resource
-    /// * 'task' - A `Task` whose `Future` resolves with the resource
+    /// * 'task' - A `Task` that resolves with a resource `R`
     pub fn request<F>(&mut self, key: K, task: Task<F, R, E>) 
     where 
         F: Future<Output = Result<R, E>> + Send + 'static
@@ -205,19 +207,6 @@ where
             ResourceState::Ready(ref ready) => {
                 ready.accessed.set(Instant::now());
                 Some(&ready.rsc)
-            },
-            _ => None
-        }
-    }
-
-    /// Returns a mutable reference to a resource if in the `Ready` state, else `None`. Marks the resource as accessed.
-    /// 
-    /// Note: This locks the handler from retreival of other resources.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut R> {
-        match self.resource_map.get_mut(key)?.state {
-            ResourceState::Ready(ref mut ready) => {
-                ready.accessed.set(Instant::now());
-                Some(&mut ready.rsc)
             },
             _ => None
         }
