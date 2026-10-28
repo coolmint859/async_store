@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/coolmint859/async_store"
 readme = "README.md"
 keywords = ["async", "game-engine", "resource-manager", "tokio", "concurrency"]
-categories = ["async", "concurrency", "game-development", "resource-manager"]
+categories = ["concurrency", "game-development"]
 
 [dependencies]
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time"]}
