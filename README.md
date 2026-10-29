@@ -30,7 +30,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-async-store = "0.1.0"
+async-store = "0.2.2"
 ```
 
 ### Simple Example Usage
