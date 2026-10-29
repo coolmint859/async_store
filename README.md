@@ -6,7 +6,7 @@ A lightweight, TTL-based, async resource storage and lifecycle handler built on 
 - Easily request resources to be created and stored with built in idempotency and retry logic
 - Deterministic resource state tracking via an explicit sync call
 - Lock-free via use of a MPSC channel
-- Resources are stored in an internal `HashMap` for $O(1)$ lookups
+- Resources are stored in an internal `HashMap` for O(1) lookups
 - Support for any kind of background work (io or cpu bound) through the use of futures
 - Automatic TTL garbage collection based on resource access
 - Automatic and configurable thread and failure timeouts
@@ -15,7 +15,7 @@ A lightweight, TTL-based, async resource storage and lifecycle handler built on 
 ### Limitations
 
 - ResourceHandler is not inherently thread safe and relies on the main thread to drive MPSC synchronization
-- Resource synchronization has $O(n)$ time complexity, where $n$ is the number of resources
+- Resource synchronization has O(n) time complexity, where n is the number of resources
 - Assumes resources to be unrelated to eachother except in their type
 - Resource mutability or updates after completion is not supported (yet)
 
@@ -85,7 +85,7 @@ Tasks are created with a `HoldPolicy`, which determine how long a resource stays
 
 ## ResourceHandlers
 
-A `ResourceHandler` is the data structure that stores a resource created from a `Task`. Resources are stored internally in a `HashMap` for $O(1)$ lookups.
+A `ResourceHandler` is the data structure that stores a resource created from a `Task`. Resources are stored internally in a `HashMap` for O(1) lookups.
 
 ### Resource States and Lifecycles
 Resources transition between three primary states:
