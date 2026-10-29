@@ -7,9 +7,9 @@ use tokio::task::JoinHandle;
 /// A stored resource
 pub struct Resource<R, E> {
     /// The currect state of a resource
-    pub state: ResourceState<R, E>,
+    pub(crate) state: ResourceState<R, E>,
     /// The generation counter of a resource (prevents stale overwrites)
-    pub generation: u64
+    pub(crate) generation: u64
 }
 
 impl<R, E> Resource<R, E> {
@@ -18,23 +18,18 @@ impl<R, E> Resource<R, E> {
         if let ResourceState::Pending(pending) = &self.state { Some(&pending.requested_at) } else { None }
     }
 
-    /// Returns a reference the resource if in the `Ready` state
+    /// Returns a reference the resource if in the `Ready` state. Resets the hold timer.
     pub fn get(&self) -> Option<&R> {
-        if let ResourceState::Ready(ready) = &self.state { Some(&ready.rsc) } else { None }
+        if let ResourceState::Ready(ready) = &self.state {
+            ready.mark_accessed();
+            Some(&ready.rsc)
+        } else { 
+            None 
+        }
     }
 
-    /// Returns a mutable reference to the resource if in the `Ready` state.
-    pub fn get_mut(&mut self) -> Option<&mut R> {
-        if let ResourceState::Ready(ready) = &mut self.state { Some(&mut ready.rsc) } else { None }
-    }
-
-    /// Takes ownership of `self` and returns `R` if in the `Ready` state, else `None`.
-    pub(crate) fn take(self) -> Option<R> {
-        self.state.take()
-    }
-
-    /// Retreive the error message if the stored resource failed to complete.
-    pub fn error(&self) -> Option<&TaskError<E>> {
+    /// Returns the error type if the resource if in the `Failed` state.
+    pub fn get_error(&self) -> Option<&TaskError<E>> {
         if let ResourceState::Failed(failed) = &self.state { Some(&failed.err) } else { None }
     }
 
@@ -45,14 +40,32 @@ impl<R, E> Resource<R, E> {
     pub fn is_pending(&self) -> bool { self.requested_at().is_some() }
 
     /// Returns `true` if this resource is in the `Failed` state, `false` otherwise.
-    pub fn is_failed(&self) -> bool { self.error().is_some() }
+    pub fn is_failed(&self) -> bool { self.get_error().is_some() }
+
+    /// Runs a closure `f` on the resource if the resource is in the `Ready` state.
+    pub fn is_ready_and(&self, f: impl FnOnce(&R)) {
+        if let Some(rsc) = self.get() { f(rsc); }
+    }
+
+    /// Returns an `Instant` specifying the last time the resource was accessed if in the `Ready` state, else `None`.
+    pub fn last_accessed(&self) -> Option<Instant> {
+        match &self.state {
+            ResourceState::Ready(ready) => Some(ready.last_accessed()),
+            _ => None
+        }
+    }
 
     /// Marks the resource as accessed if in the `Ready` state.
     pub fn mark_accessed(&self) {
         match &self.state {
-            ResourceState::Ready(ready) => ready.accessed.set(Instant::now()),
+            ResourceState::Ready(ready) => ready.mark_accessed(),
             _ => {}
         }
+    }
+
+    /// Takes ownership of `self` and returns `R` if in the `Ready` state, else `None`.
+    pub(crate) fn take(self) -> Option<R> {
+        self.state.take()
     }
 
     /// Returns `true` if this resource should be retained in a `ResourceHandler`, `false` otherwise.
@@ -88,11 +101,11 @@ impl<R, E> Resource<R, E> {
 /// Resources enter this state on the next call to `ResourceHandler::sync()` if the task's worker thread finishes successfully.
 pub struct Ready<R> {
     /// The raw resource stored
-    pub rsc: R,
+    pub(crate) rsc: R,
     /// The time in seconds before this resource should be deallocated.
-    pub hold_policy: HoldPolicy,
+    pub(crate) hold_policy: HoldPolicy,
     /// The time stamp for when this resource was last accessed.
-    pub accessed: Cell<Instant>,
+    pub(crate) accessed: Cell<Instant>,
 }
 
 impl<R> Ready<R> {
@@ -105,22 +118,43 @@ impl<R> Ready<R> {
             }
         }
     }
+
+    /// Marks the resource as accessed.
+    pub fn mark_accessed(&self) {
+        self.accessed.set(Instant::now());
+    }
+
+    /// Returns an `Instant` specifying the last time the resource was accessed.
+    pub fn last_accessed(&self) -> Instant {
+        self.accessed.get()
+    }
+
+    /// Returns a reference to the resource `R`. Marks it as accessed.
+    pub fn get_rsc(&self) -> &R {
+        self.mark_accessed();
+        return &self.rsc
+    }
 }
 
 /// The failed state of a resource, where `E` is the error that occurred.
 /// 
 /// Resources enter this state on the next call to `ResourceHandler::sync()` if the task's worker thread did not finish successfully.
 pub struct Failed<E> {
-    /// The error for why the resource failed
-    pub err: TaskError<E>,
+    /// The error type for why the resource failed
+    pub(crate) err: TaskError<E>,
     /// The time stamp for when the resource failed.
-    pub failed_at: Instant
+    pub(crate) failed_at: Instant
 }
 
 impl<E> Failed<E> {
     /// Returns `true` if the state has expired based on `timeout`, `false` otherwise.
     pub(crate) fn is_expired(&self, now: &Instant, timeout: Duration) -> bool {
         now.saturating_duration_since(self.failed_at) > timeout
+    }
+
+    /// Returns a copy of the `Instant` for when this resource was failed.
+    pub fn failed_at(&self) -> Instant {
+        self.failed_at
     }
 }
 
@@ -130,15 +164,20 @@ impl<E> Failed<E> {
 /// They leave this state at the next call to `ResourceHandler::sync()` if the task's worker thread finishes, the thread panics, or a thread timeout occurs.
 pub struct Pending {
     /// A handle to the tokio thread responsible for creating the resource
-    pub thread_handle: JoinHandle<()>,
+    pub(crate) thread_handle: JoinHandle<()>,
     /// The time stamp for when the resource was requested.
-    pub requested_at: Instant,
+    pub(crate) requested_at: Instant,
 }
 
 impl Pending {
     /// Returns `true` if the worker thread timed out, `false` otherwise.
     pub(crate) fn is_timeout(&self, now: &Instant, timeout: Duration) -> bool {
         now.saturating_duration_since(self.requested_at) >= timeout
+    }
+
+    /// Returns a copy of the `Instant` for when this resource was first requested.
+    pub fn requested_at(&self) -> Instant {
+        self.requested_at
     }
 }
 

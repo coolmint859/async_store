@@ -191,9 +191,23 @@ where
         })
     }
 
+    /// Runs a closure `f` on a resource if exists and is in the `Ready` state.
+    pub fn is_ready_and(&self, key: &K, f: impl FnOnce(&R)) {
+        if let Some(rsc) = self.get(key) { f(rsc); };
+    }
+
+    /// Returns an `Instant` specifying the last time the resource was accessed if in the `Ready` state, else `None`.
+    pub fn last_accessed(&self, key: &K) -> Option<Instant> {
+        if let Some(rsc) = self.resource_map.get(key) {
+            rsc.last_accessed()
+        } else {
+            None
+        }
+    }
+
     /// Get the error `E` of a resource with `key` if in the `Failed` state.
     pub fn get_err_of(&self, key: &K) -> Option<&TaskError<E>> {
-        return self.resource_map.get(key)?.error();
+        return self.resource_map.get(key)?.get_error();
     }
 
     /// Returns the `ResourceState` of a resource if exists, else `None`
@@ -227,44 +241,9 @@ where
     pub fn contains(&self, key: &K) -> bool {
         self.resource_map.contains_key(key)
     }
-
-    /// Returns `true` if the internal map contains a `Ready` resource with the specified `key`, `false` otherwise.
-    /// 
-    /// Note: This does not mark the resource as accessed if exists.
-    pub fn contains_ready(&self, key: &K) -> bool {
-        if let Some(rsc) = self.resource_map.get(key) {
-            match rsc.state {
-                ResourceState::Ready(_) => { return true; },
-                _ => { return false; }
-            }
-        }
-        false
-    }
-
-    /// Returns `true` if the internal map contains a `Pending` resource with the specified `key`, `false` otherwise.
-    pub fn contains_pending(&self, key: &K) -> bool {
-        if let Some(rsc) = self.resource_map.get(key) {
-            match rsc.state {
-                ResourceState::Pending(_) => { return true; },
-                _ => { return false; }
-            }
-        }
-        false
-    }
-
-    /// Returns `true` if the internal map contains a `Failed` resource with the specified `key`, `false` otherwise.
-    pub fn contains_failed(&self, key: &K) -> bool {
-        if let Some(rsc) = self.resource_map.get(key) {
-            match rsc.state {
-                ResourceState::Failed(_) => { return true; },
-                _ => { return false; }
-            }
-        }
-        false
-    }
     
     /// Get an iterator of the keys of all known resources, regardless of status
-    pub fn keys(&self) -> impl IntoIterator<Item = &K> {
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
         self.resource_map.keys()
     }
 
@@ -276,29 +255,23 @@ where
     }
 
     /// Get an iterator of the keys of all `Pending` resources.
-    pub fn pending_keys(&self) -> impl IntoIterator<Item = &K> {
+    pub fn pending_keys(&self) -> impl Iterator<Item = &K> {
         self.resource_map.iter().filter_map(|(key, rsc)| {
             if rsc.is_pending() { Some(key) } else { None }
         })
     }
 
     /// Get an iterator of the keys of all `Failed` resources.
-    pub fn failed_keys(&self) -> impl IntoIterator<Item = &K> {
+    pub fn failed_keys(&self) -> impl Iterator<Item = &K> {
         self.resource_map.iter().filter_map(|(key, rsc)| {
             if rsc.is_failed() { Some(key) } else { None }
         })
     }
 
-    /// Get a vector of known resource keys mapped to strings of their statuses in the form of a tuple. Useful for debugging purposes.
-    pub fn status_of_all(&self) -> Vec<(&K, String)> {
+    /// Get an iterator of all resource keys and states in the form of a tuple.
+    pub fn get_rsc_states(&self) -> impl Iterator<Item = (&K, &ResourceState<R, E>)> {
         self.resource_map.iter().map(|(key, resource)| {
-            let status = match &resource.state {
-                ResourceState::Failed(failed) => format!("[FAILED] Error Message: {}", failed.err),
-                ResourceState::Pending(pending) => format!("[PENDING] Time since requested: {:?}s.", pending.requested_at.elapsed()),
-                ResourceState::Ready(ready) => format!("[READY] Time since last accessed: {:?}s", ready.accessed.get().elapsed())
-            };
-
-            (key, status)
-        }).collect()
+            (key, &resource.state)
+        })
     }
 }

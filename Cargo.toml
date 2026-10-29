@@ -2,7 +2,7 @@
 name = "async-store"
 version = "0.1.0"
 edition = "2024"
-description = "A lightweight, TTL-based, async resource storage adn lifecycle handler created on top of tokio."
+description = "A lightweight, TTL-based, async resource storage and lifecycle handler built on top of tokio."
 license = "MIT"
 repository = "https://github.com/coolmint859/async_store"
 readme = "README.md"
