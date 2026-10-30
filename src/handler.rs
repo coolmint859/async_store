@@ -202,12 +202,12 @@ where
 
     /// Runs a closure `f` on a resource if exists and is in the `Ready` state. 
     /// 
-    /// Note: This marks the resource as accessed. If this is unintented behavior, call `peek_if_ready()`.
+    /// Note: This does NOT mark the resource as accessed. If this is unintented behavior, call `apply_if_ready()`.
     pub fn peek_if_ready(&self, key: &K, f: impl FnOnce(&R)) {
         if let Some(rsc) = self.peek(key) { f(rsc); };
     }
 
-    /// Runs a closure `f` for each `Ready` resource. 
+    /// Runs a closure `f` for each resource if ready. 
     /// 
     /// Note: This marks each resource as accessed. If this is unintented behavior, call `peek_for_each_ready()`.
     pub fn apply_for_each_ready(&self, mut f: impl FnMut(&K, &R)) {
