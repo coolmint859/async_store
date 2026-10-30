@@ -60,7 +60,10 @@ where
     R: Send + Debug + 'static,
     E: Send + Debug + Display + 'static
 {
-    /// Create a io-bound task (non-blocking)
+    /// Create a io-bound task (non-blocking). These run on `tokio`'s core thread pool.
+    /// 
+    /// * `policy` - A `HoldPolicy` determining the TTL of the stored resource.
+    /// * `fut` A `Future` which resolves with a `Result<R, E>`
     pub fn io_bound(policy: HoldPolicy, fut: F) -> Self {
         Self {
             fut,
@@ -70,7 +73,10 @@ where
         }
     }
 
-    /// Create a cpu-bound task (blocking)
+    /// Create a cpu-bound task (blocking). These run on `tokio`'s blocking thread pool.
+    ///
+    /// * `policy` - A `HoldPolicy` determining the TTL of the stored resource.
+    /// * `fut` A `Future` which resolves with a `Result<R, E>`
     pub fn cpu_bound(policy: HoldPolicy, fut: F) -> Self {
         Self {
             fut,
@@ -131,7 +137,7 @@ where
         }
     }
 
-    /// Converts the result of a `Task` worker thread into a `ResourceState`.
+    /// Converts the result of a `Task` into a `ResourceState`.
     fn result_to_state(result: Result<R, E>, hold_policy: HoldPolicy) -> ResourceState<R, E> {
         match result {
             Ok(rsc) => ResourceState::Ready(Ready {

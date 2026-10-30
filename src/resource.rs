@@ -18,13 +18,26 @@ impl<R, E> Resource<R, E> {
         if let ResourceState::Pending(pending) = &self.state { Some(&pending.requested_at) } else { None }
     }
 
-    /// Returns a reference the resource if in the `Ready` state. Resets the hold timer.
+    /// Returns a reference to the inner resource if in the `Ready` state.
+    /// 
+    /// Note: This marks the resource as accessed. If this is unintended behavior, call `peek()` 
     pub fn get(&self) -> Option<&R> {
-        if let ResourceState::Ready(ready) = &self.state {
-            ready.mark_accessed();
-            Some(&ready.rsc)
-        } else { 
-            None 
+        match &self.state {
+            ResourceState::Ready(ready) => {
+                ready.mark_accessed();
+                Some(&ready.rsc)
+            },
+            _ => None
+        }
+    }
+
+    /// Returns a reference to the inner resource if in the `Ready` state. 
+    /// 
+    /// Note: This does NOT mark the resource as accessed. If this is unintended behavior, call `get()`
+    pub fn peek(&self) -> Option<&R> {
+        match &self.state {
+            ResourceState::Ready(ready) => Some(&ready.rsc),
+            _ => None
         }
     }
 
@@ -42,8 +55,8 @@ impl<R, E> Resource<R, E> {
     /// Returns `true` if this resource is in the `Failed` state, `false` otherwise.
     pub fn is_failed(&self) -> bool { self.get_error().is_some() }
 
-    /// Runs a closure `f` on the resource if the resource is in the `Ready` state.
-    pub fn is_ready_and(&self, f: impl FnOnce(&R)) {
+    /// Runs a closure `f` on the resource if it's in the `Ready` state.
+    pub fn apply_if_ready(&self, f: impl FnOnce(&R)) {
         if let Some(rsc) = self.get() { f(rsc); }
     }
 
@@ -130,7 +143,7 @@ impl<R> Ready<R> {
     }
 
     /// Returns a reference to the resource `R`. Marks it as accessed.
-    pub fn get_rsc(&self) -> &R {
+    pub fn get(&self) -> &R {
         self.mark_accessed();
         return &self.rsc
     }

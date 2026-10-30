@@ -30,7 +30,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-async-store = "0.2.2"
+async-store = "0.3.0"
 ```
 
 ### Simple Example Usage
@@ -89,17 +89,11 @@ A `ResourceHandler` is the data structure that stores a resource created from a 
 
 ### Resource States and Lifecycles
 Resources transition between three primary states:
-- **Pending** - the task is actively running on a worker thread.
-- **Ready** - the task completed successfully and the resource is ready to use.
-- **Failed** - the task failed to complete, panicked, or timed out.
+- **Pending** - the `Task` is actively running on a worker thread. These can timeout if they take too long. To configure this behavior, call `set_thread_tmt()` on the `ResourceHandler`.
+- **Ready** - the `Task` completed successfully and the resource is ready to use. Resources will be removed automatically if they are not accessed based on their `HoldPolicy`. If the policy is set to `HoldPolicy::Indefinite`, this rule does not apply.
+- **Failed** - the `Task` failed to complete, panicked, or timed out. Failed resources will be removed after some time. To configure this behavior, call `set_failed_tmt()` on the `ResourceHandler`.
 
-Thread timeouts are configurable on a `ResourceHandler` by calling `set_thread_tmt()`.
-
-Ready resources will be removed if they are not used, based on the `HoldPolicy` set with the `Task` that created it. To reset the hold timer and mark the resource as `used`, call `get()` or `mark_accessed()`. If the policy is set to `HoldPolicy::Indefinite`, this rule does not apply.
-
-Failed resources will also be removed after some time. This is configurable on the handler by calling `set_failed_tmt()`
-
-To determine which state a resource is in, you can call the `is_*()` methods on the `ResourceHandler`.
+To determine which state a resource is in, you can also call the `is_*()` methods on the `ResourceHandler`.
 
 ### Storing Resources
 
@@ -110,13 +104,21 @@ There are two ways to store a resource in a `ResourceHandler`:
 The first two methods are fully idempotent - you can call them as often as you like with the same key, and only one worker thread will spawn. 
 * *Exception*: If the task previously failed under that same key, calling either method will spawn a *new* worker thread and safely reset the state to `Pending`.
 
+### Accessing Resources
+
+Resources can be retrieved by calling `get()` or `peek()`. The main difference is that `get()` will mark the resource as accessed if available, while `peek()` does not. 
+
+There are also several helper methods for running simple closures on resources or for bulk actions, such as `apply_if_ready()` or `peek_for_each_ready()`. For a list of all methods you can call, see the [docs](https://docs.rs/async-store/0.2.2/async_store).
+
 ### Thread Synchronization
 
 `ResourceHandler`s avoid locks through the use of a MPSC channel. All worker threads are *producers* in this sense, where the `ResourceHandler` is the *consumer*. 
 
 Because of this, **`sync()` should be called regularly** on the `ResourceHandler`, typically once per frame or update tick. This method drains the mpsc channel, processes completed tasks, and updates the internal resource map.
 
-Once synced, resources can be safely retrieved by calling `get()` on the `ResourceHandler`.
+## Feedback
+
+This is the first crate I've ever published. If you have any questions, feature requests, or issues you would like to see fixed, please open a discussion on the [GitHub repository](https://github.com/coolmint859/async_store/discussions) for the project!
 
 ## License
 

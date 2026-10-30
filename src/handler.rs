@@ -2,8 +2,7 @@ use std::{cell::Cell, collections::HashMap, fmt::{Debug, Display}, hash::Hash, s
 
 use crate::{resource::{Pending, Ready, Resource, ResourceState}, task::{HoldPolicy, Task, TaskError}};
 
-/// Manages and stores memory resources with concurrent creation through futures.
-/// Allows any future as long as the output type is a `Result<R, E>`.
+/// Stores and manages resource lifecycles by running `Task`s, so long as the `Future` they run returns a `Result<R, E>`
 /// 
 /// * `K`: The key type to store resources with
 /// * `R`: the resource type that will be stored
@@ -38,7 +37,7 @@ where
     /// Set the resource timeout for worker threads, in seconds. The default is 5 seconds.
     /// 
     /// This is the amount of time before a thread is considered 'dead' and is told to stop executing.
-    pub fn set_thread_tmt(&mut self,  timeout: u64) {
+    pub fn set_thread_tmt(&mut self, timeout: u64) {
         self.thread_timeout = Duration::from_secs(timeout);
     }
 
@@ -50,10 +49,10 @@ where
     }
 
     /// Returns a resource if it is in the `Ready` state. If the resource has not yet been requested or previously failed, 
-    /// a worker thread is spawned to execute the `Future F`, and `None` is returned.
+    /// the provided `Task` is run, and `None` is returned.
     /// 
-    /// * 'key' - A key of type `K` used query the handler for the resource
-    /// * 'task' - A `Task` whose `Future` resolves with the resource
+    /// * `key` - A key of type `K` used query the handler for the resource
+    /// * `task` - A `Task` that resolves with `Result<R, E>`
     pub fn get_or_request<F>(&mut self, key: K, task: Task<F, R, E>) -> Option<&R> 
     where 
         F: Future<Output = Result<R, E>> + Send + 'static
@@ -66,15 +65,15 @@ where
         self.get(&key)
     }
 
-    /// Request a worker thread to create a resource by running a `Task`.
+    /// Request a new resource by running a `Task`.
     /// 
-    /// If the resource is brand new or previously requested but failed, this method spawns a background tokio thread.
+    /// If the resource is brand new or was previously requested but failed, this method runs the provided `Task`.
     /// If the resource was previously requested but is pending or ready, this method does nothing.
     /// 
-    /// For cpu-bound tasks, generation counters are used to prevent older requests that timed out from overwriting new ones.
+    /// For *cpu-bound* tasks, generation counters are used to prevent older requests that timed out from overwriting new ones.
     /// 
-    /// * 'key' - A key of type `K` used query the handler for the resource
-    /// * 'task' - A `Task` that resolves with a resource `R`
+    /// * `key` - A key of type `K` used query the handler for the resource
+    /// * `task` - A `Task` that resolves with `Result<R, E>`
     pub fn request<F>(&mut self, key: K, task: Task<F, R, E>) 
     where 
         F: Future<Output = Result<R, E>> + Send + 'static
@@ -98,11 +97,13 @@ where
         self.resource_map.insert(key, resource);
     }
 
-    /// Store a preloaded resource into the internal map
+    /// Store an already created resource.
     /// 
-    /// * 'key' - A key of type `K` used query the handler for the resource
-    /// * 'hold_time' - The time in seconds before a resource is considered 'dead' and is removed from the handler
-    /// * 'resource' - An instance of the expected Resource this handler stores
+    /// If a resource mapped to the provided `key` already exists, this method overwrites that resource with the new one.
+    /// 
+    /// * `key` - A key of type `K` used query the `ResourceHandler`.
+    /// * `hold_policy` - A `HoldPolicy` determining the TTL of the stored resource.
+    /// * `resource` - An instance of the expected resource `R` this `ResourceHandler` stores
     pub fn store(&mut self, key: &K, hold_policy: HoldPolicy, resource: R) {
         let resource = Resource {
             state: ResourceState::Ready(Ready { 
@@ -116,25 +117,26 @@ where
         self.resource_map.insert(key.clone(), resource);
     }
 
-    /// Remove a resource from the internal map (in any state). Returns the resource if found.
+    /// Remove a resource from the internal map (in any state). Returns the resource if in the `Ready` state, else `None`.
     pub fn remove(&mut self, key: &K) -> Option<R> {
         self.resource_map
             .remove(key)
             .and_then(|rsc| rsc.take())
     }
 
-    /// Removes a resource from internal map if it's in the `Ready` state, and returns it.
+    /// Removes a resource from the internal map if it's in the `Ready` state, and returns it.
     pub fn remove_ready(&mut self, key: &K) -> Option<R> {
         if self.is_ready(key) { self.remove(key) } else { None }
     }
 
-    /// Removes a resource from internal map if it's in the `Failed` state.
+    /// Removes a resource from the internal map if it's in the `Failed` state.
     pub fn remove_failed(&mut self, key: &K) {
         if self.is_failed(key) { self.remove(key); }
     }
 
     /// Removes all resources.
     pub fn clear(&mut self) {
+        // Generation counters automatically prevent still running tasks from polluting the map, so this is all thats needed.
         self.resource_map.clear();
     }
 
@@ -144,10 +146,10 @@ where
             rsc.is_pending() || rsc.is_ready()
         });
     }
-
-    /// Syncronize the resource threads with the main thread, making available any completed resources. 
+ 
+    /// Synchronize the task worker threads with the main thread, making available any completed resources. 
     ///
-    /// Should be called regularly (i.e. every frame)
+    /// This method should be called regularly (i.e. every frame)
     pub fn sync(&mut self) {
         while let Ok((key, sent_rsc)) = self.rx.try_recv() {
             let key = key.clone();
@@ -191,18 +193,41 @@ where
         })
     }
 
-    /// Runs a closure `f` on a resource if exists and is in the `Ready` state.
-    pub fn is_ready_and(&self, key: &K, f: impl FnOnce(&R)) {
+    /// Runs a closure `f` on a resource if exists and is in the `Ready` state. 
+    /// 
+    /// Note: This marks the resource as accessed. If this is unintented behavior, call `peek_if_ready()`.
+    pub fn apply_if_ready(&self, key: &K, f: impl FnOnce(&R)) {
         if let Some(rsc) = self.get(key) { f(rsc); };
+    }
+
+    /// Runs a closure `f` on a resource if exists and is in the `Ready` state. 
+    /// 
+    /// Note: This marks the resource as accessed. If this is unintented behavior, call `peek_if_ready()`.
+    pub fn peek_if_ready(&self, key: &K, f: impl FnOnce(&R)) {
+        if let Some(rsc) = self.peek(key) { f(rsc); };
+    }
+
+    /// Runs a closure `f` for each `Ready` resource. 
+    /// 
+    /// Note: This marks each resource as accessed. If this is unintented behavior, call `peek_for_each_ready()`.
+    pub fn apply_for_each_ready(&self, mut f: impl FnMut(&K, &R)) {
+        for (key, rsc) in self.resource_map.iter() {
+            if let Some(r) = rsc.get() { f(key, r); }
+        }
+    }
+
+    /// Runs a closure `f` for each `Ready` resource. 
+    /// 
+    /// Note: This does not mark the resources as accessed. If this is unintented behavior, call `apply_for_each_ready()`.
+    pub fn peek_for_each_ready(&self, mut f: impl FnMut(&K, &R)) {
+        for (key, rsc) in self.resource_map.iter() {
+            if let Some(r) = rsc.peek() { f(key, r); }
+        }
     }
 
     /// Returns an `Instant` specifying the last time the resource was accessed if in the `Ready` state, else `None`.
     pub fn last_accessed(&self, key: &K) -> Option<Instant> {
-        if let Some(rsc) = self.resource_map.get(key) {
-            rsc.last_accessed()
-        } else {
-            None
-        }
+        self.resource_map.get(key)?.last_accessed()
     }
 
     /// Get the error `E` of a resource with `key` if in the `Failed` state.
@@ -215,15 +240,24 @@ where
         self.resource_map.get(key).map(|rsc| &rsc.state)
     }
 
-    /// Returns a reference to a resource if in the `Ready` state, else `None`. Marks the resource as accessed.
+    /// Returns a reference to a resource if in the `Ready` state, else `None`. 
+    /// 
+    /// Note: This marks the resource as accessed. If this is unintended behavior, call `peek()`  
     pub fn get(&self, key: &K) -> Option<&R> {
-        match self.resource_map.get(key)?.state {
-            ResourceState::Ready(ref ready) => {
-                ready.accessed.set(Instant::now());
-                Some(&ready.rsc)
-            },
-            _ => None
+        if let Some(rsc) = self.resource_map.get(key) {
+            return rsc.get();
         }
+        None
+    }
+
+    /// Returns a reference to a resource if in the `Ready` state, else `None`. 
+    /// 
+    /// Note: This does NOT mark the resource as accessed. If this is unintended behavior, call `get()` 
+    pub fn peek(&self, key: &K) -> Option<&R> {
+        if let Some(rsc) = self.resource_map.get(key) {
+            return rsc.peek();
+        }
+        None
     }
 
     /// Mark a `Ready` resource as accessed.
@@ -242,7 +276,7 @@ where
         self.resource_map.contains_key(key)
     }
     
-    /// Get an iterator of the keys of all known resources, regardless of status
+    /// Get an iterator of the keys of all resources, regardless of state.
     pub fn keys(&self) -> impl Iterator<Item = &K> {
         self.resource_map.keys()
     }
