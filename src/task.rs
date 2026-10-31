@@ -4,7 +4,7 @@ use std::{cell::Cell, fmt::{Debug, Display}, marker::PhantomData, sync::mpsc::Se
 use futures_util::FutureExt;
 use tokio::{runtime::Handle, task::JoinHandle};
 
-use crate::resource::{Failed, Ready, Resource, ResourceState};
+use crate::{FailedTimeout, ResourceConfig, ThreadTimeout, resource::ResourceState};
 
 /// Describes the TTL policy for resources stored in a `ResourceHandler`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,7 +50,8 @@ impl<E: Display> Display for TaskError<E> {
 pub struct Task<F, R, E> {
     pub fut: F,
     pub ty: TaskType,
-    pub hold_policy: HoldPolicy,
+    pub rsc_config: ResourceConfig,
+    pub max_retries: Option<u32>,
     _rsc: PhantomData<(R, E)>,
 }
 
@@ -68,7 +69,8 @@ where
         Self {
             fut,
             ty: TaskType::IoBound,
-            hold_policy: policy,
+            max_retries: None,
+            rsc_config: ResourceConfig::default_with_policy(policy),
             _rsc: PhantomData,
         }
     }
@@ -81,20 +83,39 @@ where
         Self {
             fut,
             ty: TaskType::CpuBound,
-            hold_policy: policy,
+            rsc_config: ResourceConfig::default_with_policy(policy),
+            max_retries: None,
             _rsc: PhantomData,
         }
     }
 
-    /// Runs this task on a tokio thread and sends the result through `tx`.
+    /// Sets the timeout for how long this task can be pending before being marked as failed.
+    pub fn with_thread_tmt(mut self, timeout: ThreadTimeout) -> Self {
+        self.rsc_config.thread_timeout = timeout;
+        self
+    }
+
+    /// Sets the max retry count for this task.
+    pub fn with_max_retries(mut self, max_retries: Option<u32>) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Sets the timeout for how long a failed resource should be kept in memory before being removed.
+    pub fn with_failed_tmt(mut self, timeout: FailedTimeout) -> Self {
+        self.rsc_config.failed_timeout = timeout;
+        self
+    }
+
+    /// Runs this task on a tokio thread and sends the result through `tx`. Consumes `self`
     /// 
     /// Returns the handle to the tokio thread used to run the task.
-    pub(crate) fn run<K>(self, 
+    pub(crate) fn run<K: Send + 'static>(
+        self, 
         key: K,
-        generation: u64, 
-        tx: Sender<(K, Resource<R, E>)>
+        request_count: u32, 
+        tx: Sender<(K, u32, ResourceState<R, E>)>
     ) -> JoinHandle<()> 
-    where K: Send + 'static
     {
         match self.ty {
             TaskType::IoBound => {
@@ -103,15 +124,14 @@ where
                         .catch_unwind().await;
                     
                     let state =  match result {
-                        Ok(task_result) => Self::result_to_state(task_result, self.hold_policy),
-                        Err(_) => ResourceState::Failed(Failed {
+                        Ok(task_result) => Self::result_to_state(task_result),
+                        Err(_) => ResourceState::Failed {
                             err: TaskError::ThreadPanic,
                             failed_at: Instant::now()
-                        })
+                        }
                     };
 
-                    let resource = Resource { state, generation }; 
-                    let _ = tx.send((key, resource));
+                    let _ = tx.send((key, request_count, state));
                 })
             },
             TaskType::CpuBound => {
@@ -123,32 +143,30 @@ where
                     }));
 
                     let state = match result {
-                        Ok(task_result) => Self::result_to_state(task_result, self.hold_policy),
-                        Err(_) => ResourceState::Failed(Failed { 
+                        Ok(task_result) => Self::result_to_state(task_result),
+                        Err(_) => ResourceState::Failed { 
                             err: TaskError::ThreadPanic, 
                             failed_at: Instant::now()
-                        })
+                        }
                     };
                     
-                    let resource = Resource { state, generation };
-                    let _ = tx.send((key, resource));
+                    let _ = tx.send((key, request_count, state));
                 })
             }
         }
     }
 
     /// Converts the result of a `Task` into a `ResourceState`.
-    fn result_to_state(result: Result<R, E>, hold_policy: HoldPolicy) -> ResourceState<R, E> {
+    fn result_to_state(result: Result<R, E>) -> ResourceState<R, E> {
         match result {
-            Ok(rsc) => ResourceState::Ready(Ready {
+            Ok(rsc) => ResourceState::Ready {
                 rsc,
-                hold_policy,
                 accessed: Cell::new(Instant::now())
-            }),
-            Err(e) => ResourceState::Failed(Failed {
+            },
+            Err(e) => ResourceState::Failed {
                 err: TaskError::TaskInternal(e),
                 failed_at: Instant::now()
-            })
+            }
         }
     }
 }

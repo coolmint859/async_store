@@ -32,7 +32,7 @@ mod tests {
 
         let task = Task::io_bound(
             HoldPolicy::Indefinite,
-            async { Ok("Hello, Tokio-Store!".to_string()) }
+            async { Ok("Hello, Async-Store!".to_string()) }
         );
 
         let res = handler.get_or_request(key.clone(), task);
@@ -44,10 +44,10 @@ mod tests {
 
         assert!(handler.is_ready(&key));
         let value = handler.get(&key);
-        assert_eq!(value.map(|s| s.as_str()), Some("Hello, Tokio-Store!"));
+        assert_eq!(value.map(|s| s.as_str()), Some("Hello, Async-Store!"));
 
         let removed = handler.remove(&key);
-        assert_eq!(removed, Some("Hello, Tokio-Store!".to_string()));
+        assert_eq!(removed, Some("Hello, Async-Store!".to_string()));
         assert!(!handler.contains(&key));
     }
 
@@ -126,8 +126,7 @@ mod tests {
         }
     }
 
-    /// Ensures that generation tracking is handled correctly, 
-    /// and that successful tasks are priortized over failed tasks with the same key.
+    /// Ensures that generation tracking is handled correctly, and that newer generations are prioritized over older generations.
     #[tokio::test]
     async fn test_generation_tracking() {
         let mut handler: ResourceHandler<String, usize, TestError> = ResourceHandler::new();
@@ -163,9 +162,48 @@ mod tests {
         let mut handler: ResourceHandler<String, &str, TestError> = ResourceHandler::new();
         let key = "config".to_string();
 
-        handler.store(&key, HoldPolicy::Indefinite, "cached_data");
+        handler.store(&key, "cached_data", ResourceConfig::default());
 
         assert!(handler.is_ready(&key));
         assert_eq!(handler.get(&key), Some(&"cached_data"));
+    }
+
+    /// Ensures maximum retries are respected.
+    #[tokio::test]
+    async fn test_max_retries() {
+        let mut handler = ResourceHandler::<String, &str, TestError>::new()
+            .with_max_retries(Some(3));
+
+        let key = String::from("retry_test");
+
+        // three retries should max out the attempts
+        for _ in 0..3 {
+            let next_attempt = Task::io_bound(
+                HoldPolicy::Indefinite,
+                async { Err(TestError::LoadFailed) }
+            );
+    
+            handler.request(key.clone(), next_attempt);
+            assert!(handler.is_pending(&key));
+    
+            sleep(Duration::from_millis(30)).await;
+            handler.sync();
+    
+            assert!(handler.is_failed(&key));
+        }
+
+        let final_attempt = Task::io_bound(
+            HoldPolicy::Indefinite,
+            async { Err(TestError::LoadFailed) }
+        ).with_failed_tmt(FailedTimeout::Immediate);
+
+        handler.request(key.clone(), final_attempt);
+        assert!(handler.is_failed(&key)); // should remain in failed state
+
+        sleep(Duration::from_millis(30)).await;
+        handler.sync();
+
+        // resource should no longer be in handler
+        assert!(!handler.contains(&key));
     }
 }
